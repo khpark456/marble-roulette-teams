@@ -1,0 +1,61 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "{{APP_ID}}",
+  "developer": {
+    "name": "{{DEVELOPER_NAME}}",
+    "websiteUrl": "{{APP_URL}}",
+    "privacyUrl": "{{APP_URL}}",
+    "termsOfUseUrl": "{{APP_URL}}"
+  },
+  "name": {
+    "short": "구슬 추첨",
+    "full": "구슬 추첨 - 마블 룰렛 기반 랜덤 추첨기"
+  },
+  "description": {
+    "short": "구슬을 굴려 당첨자를 뽑는 회의용 추첨기",
+    "full": "참가자 이름을 입력하고 구슬을 굴려 당첨자를 뽑습니다. 회의 사이드 패널에서 스테이지에 공유하면 모든 참가자가 같은 추첨 화면을 실시간으로 봅니다. lazygyu의 오픈소스 마블 룰렛(MIT)을 기반으로 합니다."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#5B5FC7",
+  "configurableTabs": [
+    {
+      "configurationUrl": "{{APP_URL}}config.html",
+      "canUpdateConfiguration": false,
+      "scopes": ["team", "groupChat"],
+      "context": [
+        "channelTab",
+        "privateChatTab",
+        "meetingChatTab",
+        "meetingDetailsTab",
+        "meetingSidePanel",
+        "meetingStage"
+      ],
+      "meetingSurfaces": ["sidePanel", "stage"]
+    }
+  ],
+  "staticTabs": [
+    {
+      "entityId": "marble-roulette-personal",
+      "name": "구슬 추첨",
+      "contentUrl": "{{APP_URL}}?inTeams=1",
+      "websiteUrl": "{{APP_URL}}",
+      "scopes": ["personal"]
+    }
+  ],
+  "permissions": ["identity"],
+  "validDomains": ["{{APP_HOST}}"],
+  "showLoadingIndicator": false,
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        { "name": "MeetingStage.Write.Chat", "type": "Delegated" },
+        { "name": "ChannelMeetingStage.Write.Group", "type": "Delegated" }
+      ]
+    }
+  }
+}

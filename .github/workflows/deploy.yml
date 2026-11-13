@@ -1,36 +1,61 @@
-# This is a basic workflow to help you get started with Actions
+name: Deploy to GitHub Pages + Teams package
 
-name: Build and Deploy
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: ["main"]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: build
-        run: |
-          yarn
-          npx update-browserslist-db@latest
-          yarn build
-      - name: deploy
-        uses: peaceiris/actions-gh-pages@v4
+      - uses: actions/setup-node@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          node-version: 22
+          cache: yarn
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build web app
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+
+      # Pages 주소(https://<계정>.github.io/<저장소>/)로 Teams 매니페스트를 채워 zip 을 만든다.
+      # 커스텀 도메인을 쓰면 base_url 도 그 도메인으로 나온다.
+      - name: Build Teams app package
+        env:
+          TEAMS_APP_URL: ${{ steps.pages.outputs.base_url }}/
+          TEAMS_DEVELOPER_NAME: ${{ github.repository_owner }}
+        run: yarn teams:package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teams-app-package
+          path: dist-teams/marble-roulette-teams.zip
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,3 +1,4 @@
+import { simRandom } from './rng';
 export function rad(degree: number) {
   return (Math.PI * degree) / 180;
 }
@@ -35,7 +36,7 @@ export function shuffle<T>(originalArray: T[]): T[] {
   // While there remain elements to shuffle.
   while (currentIndex !== 0) {
     // Pick a remaining element.
-    randomIndex = Math.floor(Math.random() * currentIndex);
+    randomIndex = Math.floor(simRandom() * currentIndex);
     currentIndex--;
 
     // And swap it with the current element.

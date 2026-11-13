@@ -11,6 +11,7 @@ import Box2DFactory from 'box2d-wasm';
 import { STUCK_DELAY } from '../src/data/constants';
 import { stages } from '../src/data/maps';
 import { Box2dPhysics } from '../src/physics-box2d';
+import { reseed } from '../src/utils/rng';
 
 const STEP_MS = 10;
 const MAX_SIM_SEC = 900;
@@ -18,7 +19,9 @@ const MAX_SIM_SEC = 900;
 const STUCK_LEN_SQ = 0.00001;
 const STUCK_SPEED = Math.sqrt(STUCK_LEN_SQ) / (STEP_MS / 1000);
 
+// 물리·구슬은 src/utils/rng 의 simRandom 을 쓰므로 그쪽도 같은 시드로 맞춘다
 function seedRandom(seed: number) {
+  reseed(seed);
   let a = seed >>> 0;
   Math.random = () => {
     a = (a + 0x6d2b79f5) >>> 0;

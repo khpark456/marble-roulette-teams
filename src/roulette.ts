@@ -18,6 +18,8 @@ import type { ColorTheme } from './types/ColorTheme';
 import type { MouseEventHandlerName, MouseEventName } from './types/mouseEvents.type';
 import type { UIObject } from './UIObject';
 import { bound } from './utils/bound.decorator';
+import { oneMinusExpNeg } from './utils/detMath';
+import { randomSeed, reseed } from './utils/rng';
 import { parseName, shuffle } from './utils/utils';
 import { VideoRecorder } from './utils/videoRecorder';
 import { drawZoomZones, zoomZoneIntensity } from './zoomZone';
@@ -35,6 +37,9 @@ function clipWinnerRange({ start, end }: WinnerRange, marbleCount: number): Winn
  */
 const RANK_EMA_SEC = 0.4;
 const RANK_MARGIN = 0.25;
+
+/** 골인한 구슬을 물리에서 지우기까지의 스텝 수 (10ms 스텝 × 50 = 0.5초) */
+const REMOVE_AFTER_STEPS = 50;
 
 export class Roulette extends EventTarget {
   private _marbles: Marble[] = [];
@@ -71,9 +76,14 @@ export class Roulette extends EventTarget {
   /** 진행 중에는 null, 당첨자가 모두 확정되면 당첨자 배열 */
   private _result: Marble[] | null = null;
 
-  // 구슬 id(= order)는 매 라운드 재사용된다. 리셋 시 취소하지 않으면 이 타이머가
-  // 뒤늦게 발화해 같은 id를 가진 새 라운드의 구슬을 지워버린다
-  private _pendingRemovals: number[] = [];
+  // 골인한 구슬은 잠시 뒤(REMOVE_AFTER_STEPS 스텝) 물리에서 지운다. 벽시계 타이머를 쓰면 지워지는
+  // 시점이 프레임 속도에 따라 달라져 다시보기 결과가 어긋나므로 스텝 수로 센다.
+  // 구슬 id(= order)는 매 라운드 재사용되므로 리셋 때 비운다
+  private _pendingRemovals: { id: number; steps: number }[] = [];
+
+  /** 이번 구슬 배치의 시드와 이름 목록. 같은 값으로 setMarbles 하면 같은 추첨이 재현된다 */
+  private _seed = 0;
+  private _names: string[] = [];
 
   private _uiObjects: UIObject[] = [];
 
@@ -137,24 +147,22 @@ export class Roulette extends EventTarget {
     }
     this._lastTime = currentTime;
 
-    // _timeScale 은 _updateMarbles 에서 갱신되지만 물리 스텝 크기는 이 프레임 시작값으로 고정된다.
-    // 구슬 정지 판정도 같은 값을 써야 실제 진행된 물리 시간과 맞는다
-    const timeScale = this._timeScale;
-    const interval = (this._updateInterval / 1000) * timeScale;
-
-    let simSeconds = 0;
+    // 다시보기가 같은 결과를 내려면 시뮬레이션이 프레임 속도와 무관해야 한다.
+    // 그래서 스텝 크기(슬로모션)와 순위 정렬을 프레임이 아니라 스텝마다 갱신한다.
+    // 구슬 정지 판정도 같은 timeScale 을 써야 실제 진행된 물리 시간과 맞는다
     while (this._elapsed >= this._updateInterval) {
-      simSeconds += interval;
+      const timeScale = this._timeScale;
+      const interval = (this._updateInterval / 1000) * timeScale;
       this.physics.step(interval);
+      this._tickRemovals();
       this._updateMarbles(this._updateInterval, timeScale);
+      if (this._marbles.length > 1) {
+        this._sortMarbles(interval);
+      }
       this._particleManager.update(this._updateInterval);
       this._updateEffects(this._updateInterval);
       this._elapsed -= this._updateInterval;
       this._uiObjects.forEach((obj) => obj.update(this._updateInterval));
-    }
-
-    if (this._marbles.length > 1) {
-      this._sortMarbles(simSeconds);
     }
 
     if (this._stage) {
@@ -176,7 +184,7 @@ export class Roulette extends EventTarget {
 
   /**
    * 순위대로 정렬한다. 순위 값은 진행도 지도의 "결승까지 남은 거리" (progressMap.ts).
-   * dt = 이번 프레임에 진행된 물리 시간(초)
+   * dt = 이번 스텝에 진행된 물리 시간(초)
    */
   private _sortMarbles(dt: number) {
     if (!this._stage) return;
@@ -184,7 +192,7 @@ export class Roulette extends EventTarget {
 
     /** 지난 프레임 기록이 있는 구슬 수. 구슬을 새로 넣은 직후면 0 */
     let known = 0;
-    const alpha = 1 - Math.exp(-dt / RANK_EMA_SEC);
+    const alpha = oneMinusExpNeg(dt / RANK_EMA_SEC);
     const keys = new Map<Marble, number>();
     for (const m of this._marbles) {
       const raw = map.distanceAt(m.x, m.y);
@@ -243,11 +251,7 @@ export class Roulette extends EventTarget {
         if (this._isRunning && this._isWinningRank(this._winners.length - 1)) {
           this._particleManager.shot(this._renderer.width, this._renderer.height);
         }
-        this._pendingRemovals.push(
-          window.setTimeout(() => {
-            this.physics.removeMarble(marble.id);
-          }, 500)
-        );
+        this._pendingRemovals.push({ id: marble.id, steps: REMOVE_AFTER_STEPS });
       }
     }
 
@@ -268,6 +272,15 @@ export class Roulette extends EventTarget {
     this._marbles = this._marbles.filter((marble) => marble.y <= this._stage?.goalY);
 
     this._checkFinish();
+  }
+
+  private _tickRemovals() {
+    if (!this._pendingRemovals.length) return;
+    for (const r of this._pendingRemovals) {
+      r.steps--;
+      if (r.steps <= 0) this.physics.removeMarble(r.id);
+    }
+    this._pendingRemovals = this._pendingRemovals.filter((r) => r.steps > 0);
   }
 
   /** 카메라와 슬로우모션이 주목할 구슬 = 당첨 커트라인에 걸쳐있는 구슬 */
@@ -462,7 +475,6 @@ export class Roulette extends EventTarget {
   }
 
   public clearMarbles() {
-    this._pendingRemovals.forEach((id) => window.clearTimeout(id));
     this._pendingRemovals = [];
     this.physics.clearMarbles();
     this._result = null;
@@ -481,18 +493,44 @@ export class Roulette extends EventTarget {
 
   public start() {
     this._isRunning = true;
-    this._winnerRange = clipWinnerRange(options.winnerRange, this._marbles.length);
-    this._camera.startFollowingMarbles();
-
-    if (this._autoRecording) {
-      this._recorder.start().then(() => {
-        this.physics.start();
-        this._marbles.forEach((marble) => (marble.isActive = true));
-      });
-    } else {
+    // 월드 재구성과 물리 시작 사이에 스텝이 끼면 안 되므로 한 번에 한다
+    const begin = () => {
+      this._rebuildForRun();
+      this._winnerRange = clipWinnerRange(options.winnerRange, this._marbles.length);
+      this._camera.startFollowingMarbles();
       this.physics.start();
       this._marbles.forEach((marble) => (marble.isActive = true));
+    };
+
+    if (this._autoRecording) {
+      this._recorder.start().then(begin);
+    } else {
+      begin();
     }
+  }
+
+  /**
+   * 출발 직전에 빈 월드에서 같은 시드로 구슬을 다시 놓는다.
+   * 기다리는 동안 회전 장애물이 돌아간 각도나 이전 판의 물리 내부 상태가 결과에 섞이지 않게 해서,
+   * 시드·이름·맵·옵션이 같으면 어느 PC 에서든 같은 추첨이 나오게 한다 (다시보기).
+   * 장애물이 처음 각도로 돌아가지만 출발 순간이라 눈에 띄지 않는다
+   */
+  private _rebuildForRun() {
+    this.physics.resetWorld();
+    this.setMarbles(this._names, this._seed);
+    this._rankKeys = new Map();
+    this._timeScale = 1;
+    this._zoomIntensity = null;
+  }
+
+  /** 다시보기 공유용: 지금 구슬 배치를 만든 시드 */
+  public getSeed() {
+    return this._seed;
+  }
+
+  /** 다시보기 공유용: setMarbles 에 넘긴 이름 목록 (이름*개수, 이름/가중치 그대로) */
+  public getNames() {
+    return this._names.slice();
   }
 
   public setSpeed(value: number) {
@@ -554,7 +592,11 @@ export class Roulette extends EventTarget {
     this._autoRecording = value;
   }
 
-  public setMarbles(names: string[]) {
+  /** seed 를 주면 그 시드로, 없으면 새 시드로 배치한다 */
+  public setMarbles(names: string[], seed?: number) {
+    this._names = names.slice();
+    this._seed = (seed ?? randomSeed()) >>> 0;
+    reseed(this._seed);
     this.reset();
     const arr = names.slice();
 

@@ -2,6 +2,7 @@ import Box2DFactory from 'box2d-wasm';
 import type { StageDef } from './data/maps';
 import type { IPhysics } from './IPhysics';
 import type { MapEntity, MapEntityState } from './types/MapEntity.type';
+import { simRandom } from './utils/rng';
 
 export class Box2dPhysics implements IPhysics {
   private Box2D!: typeof Box2D & EmscriptenModule;
@@ -22,6 +23,19 @@ export class Box2dPhysics implements IPhysics {
 
   clear(): void {
     this.clearEntities();
+  }
+
+  /**
+   * 월드를 새로 만든다. 지운 몸체의 브로드페이즈 노드가 재사용되는 순서 같은 내부 상태가
+   * 이전 판에 따라 달라지면 접촉 처리 순서가 바뀌어 결과가 어긋나므로, 다시보기가 가능한
+   * 추첨은 항상 빈 월드에서 시작한다.
+   */
+  resetWorld(): void {
+    this.Box2D.destroy(this.world);
+    this.world = new this.Box2D.b2World(this.gravity);
+    this.marbleMap = {};
+    this.entities = [];
+    this.deleteCandidates = [];
   }
 
   clearMarbles(): void {
@@ -109,7 +123,7 @@ export class Box2dPhysics implements IPhysics {
     bodyDef.set_position(new this.Box2D.b2Vec2(x, y));
 
     const body = this.world.CreateBody(bodyDef);
-    body.CreateFixture(circleShape, 1 + Math.random());
+    body.CreateFixture(circleShape, 1 + simRandom());
     body.SetAwake(false);
     body.SetEnabled(false);
     this.marbleMap[id] = body;
@@ -118,7 +132,7 @@ export class Box2dPhysics implements IPhysics {
   shakeMarble(id: number): void {
     const body = this.marbleMap[id];
     if (body) {
-      body.ApplyLinearImpulseToCenter(new this.Box2D.b2Vec2(Math.random() * 10 - 5, Math.random() * 10 - 5), true);
+      body.ApplyLinearImpulseToCenter(new this.Box2D.b2Vec2(simRandom() * 10 - 5, simRandom() * 10 - 5), true);
     }
   }
 

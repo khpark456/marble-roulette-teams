@@ -6,6 +6,8 @@ export interface IPhysics {
 
   clear(): void;
 
+  resetWorld(): void;
+
   clearMarbles(): void;
 
   createStage(stage: StageDef): void;

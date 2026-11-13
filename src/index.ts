@@ -1,38 +1,20 @@
 import './localization';
-import { AdService } from './adService';
 import { reportCommunityMapPlay } from './communityMaps';
 import { initMapSelector } from './mapSelector';
 import options from './options';
 import { Roulette } from './roulette';
+import { decodeReplay, encodeReplay, type ReplayData } from './replay';
+import { initTeams, REPLAY_SUBPAGE_PREFIX, shareReplay } from './teams';
 
-// 어떤 버전이 실제로 돌고 있는지 관측한다. 옛 서비스워커에 고착된 클라이언트는
-// 이 코드가 없는 번들을 쓰므로 이벤트를 보내지 않는다. 즉 전체 pageview 대비
-// 이 이벤트의 비율이 곧 회수율이다.
-//
-// 번들 파일명의 content hash를 그대로 버전으로 쓴다. 빌드 시 주입이 필요 없고,
-// 실제로 내용이 달라졌을 때만 값이 바뀌므로 커밋 해시보다 정확하다.
-// import.meta.url은 못 쓴다. Parcel이 번들 URL이 아니라 소스 경로 리터럴로 치환한다.
-// dev 서버는 파일명에 해시가 없어 'dev'로 떨어진다.
-const bundleSrc = document.querySelector<HTMLScriptElement>('script[type="module"]')?.src ?? '';
-const version = bundleSrc.match(/\.([0-9a-f]{6,})\.js/)?.[1] ?? 'dev';
-
-// umami는 defer로 로드되므로 load 시점이면 이미 준비돼 있다.
-window.addEventListener('load', () => {
-  (window as any).umami?.track('version', { v: version });
-});
+// Teams 사내용 포크: 광고(AdService)와 외부 분석(umami/gtag)은 뺐다.
+// 원본은 구슬 이름(=참가자 이름)을 분석 서버로 보내는데, 사내에서 쓰면 직원 이름이
+// 외부로 나가므로 제거했다. 맵 공유마당(맵 내려받기)은 그대로 쓴다.
 
 const roulette = new Roulette();
+(window as any).roulette = roulette;
 
 const isLocalhost = ['localhost', '127.0.0.1'].includes(location.hostname);
-const adService = new AdService(isLocalhost ? 'http://localhost:3000' : 'https://marblerouletteshop.com');
-
-// 소재를 시작 버튼 누른 뒤에 받으면 프리롤이 로고 없이 떴다가 늦게 채워진다. 미리 받아둔다
-const preloadNextAd = () => roulette.preloadAdImages(adService.nextUrls());
-adService.onUpdate = preloadNextAd;
-adService.init();
-
-(window as any).roulette = roulette;
-// 맵 공유마당 API 는 광고와 같은 서버에 있다
+// 맵 공유마당 API
 const mapApiBase = isLocalhost ? 'http://localhost:3000' : 'https://marblerouletteshop.com';
 
 // index.html 이 초기화할 때 부른다
@@ -42,57 +24,16 @@ const mapApiBase = isLocalhost ? 'http://localhost:3000' : 'https://marbleroulet
 // 시작 버튼. 받은 맵이면 플레이 1회를 알린다
 (window as any).reportMapPlay = () => reportCommunityMapPlay(mapApiBase, roulette.getCurrentMap()?.id ?? '');
 (window as any).options = options;
-const PREROLL_MS = 1500;
 
-function once(fn: () => void): () => void {
-  let called = false;
-  return () => {
-    if (called) return;
-    called = true;
-    fn();
-  };
-}
+// 다시보기: 웹 링크(?replay=) 또는 Teams 딥링크(subPageId 'replay:...')로 들어온다.
+// index.html 의 initialize 가 이 값을 받아 다시보기 모드로 들어간다
+const replayPromise = (async () => {
+  const fromUrl = new URLSearchParams(location.search).get('replay');
+  const subPageId = await initTeams();
+  const raw = fromUrl ?? (subPageId?.startsWith(REPLAY_SUBPAGE_PREFIX) ? subPageId.slice(REPLAY_SUBPAGE_PREFIX.length) : null);
+  return raw ? decodeReplay(raw) : null;
+})();
+(window as any).getReplay = () => replayPromise;
 
-(window as any).ads = {
-  beginRound(onStart: () => void) {
-    const start = once(onStart);
-
-    let ad = null;
-    try {
-      ad = adService.pickForRound();
-      roulette.setAd(ad);
-      if (ad) adService.trackImpression();
-      preloadNextAd();
-    } catch (e) {
-      console.error('[ads] 광고 준비 실패, 광고 없이 진행합니다', e);
-      ad = null;
-    }
-
-    roulette.startRecording().then(() => {
-      if (!ad) {
-        start();
-        return;
-      }
-
-      try {
-        roulette.showAdOverlay('preroll');
-      } catch (e) {
-        console.error('[ads] 프리롤 표시 실패, 바로 시작합니다', e);
-        start();
-        return;
-      }
-
-      window.setTimeout(() => {
-        roulette.hideAdOverlay();
-        start();
-      }, PREROLL_MS);
-    });
-  },
-  showResult() {
-    try {
-      roulette.showAdOverlay('result');
-    } catch (e) {
-      console.error('[ads] 결과 화면 광고 표시 실패', e);
-    }
-  },
-};
+// 결과 공유 버튼
+(window as any).shareResult = (data: ReplayData, winners: string[]) => shareReplay(encodeReplay(data), winners);

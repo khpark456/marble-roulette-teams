@@ -13,6 +13,7 @@
 
 import type { OneWayLine, StageDef } from './data/maps';
 import type { MapEntity } from './types/MapEntity.type';
+import { dcos, dhypot, dsin } from './utils/detMath';
 
 const CELL = 0.25;
 const MARBLE_RADIUS = 0.25;
@@ -162,7 +163,7 @@ export class ProgressMap {
     if (t0 > t1) return;
     const sx = ax + dx * t0;
     const sy = ay + dy * t0;
-    const len = Math.hypot(dx, dy) * (t1 - t0);
+    const len = dhypot(dx, dy) * (t1 - t0);
     const steps = Math.max(1, Math.ceil(len / (CELL / 2)));
     const span = Math.ceil(INFLATE / CELL) + 1;
     for (let k = 0; k <= steps; k++) {
@@ -197,8 +198,8 @@ export class ProgressMap {
       if (e.type === 'kinematic' && e.props.angularVelocity !== 0) {
         // 물리 몸체는 position 을 중심으로 돈다
         const { x: ox, y: oy } = e.position;
-        const reach = Math.max(...reachPoints(e).map(([x, y]) => Math.hypot(x - ox, y - oy))) + LIFT_MARGIN;
-        mark(ox - reach, ox + reach, oy - reach, oy + reach, (x, y) => Math.hypot(x - ox, y - oy) <= reach);
+        const reach = Math.max(...reachPoints(e).map(([x, y]) => dhypot(x - ox, y - oy))) + LIFT_MARGIN;
+        mark(ox - reach, ox + reach, oy - reach, oy + reach, (x, y) => dhypot(x - ox, y - oy) <= reach);
       }
       if (e.props.restitution > 1) {
         const pts = reachPoints(e);
@@ -333,7 +334,7 @@ export class ProgressMap {
           if (c < 0 || c >= this.cols) continue;
           const d = this.dist[r * this.cols + c];
           if (d < 0 || d === Infinity) continue;
-          const cand = d + Math.hypot(x - this.cellX(c), qy - this.cellY(r));
+          const cand = d + dhypot(x - this.cellX(c), qy - this.cellY(r));
           if (cand < best) best = cand;
         }
       }
@@ -382,7 +383,7 @@ export class ProgressMap {
       ctx.moveTo(from[0], from[1]);
       ctx.lineTo(to[0], to[1]);
       ctx.stroke();
-      const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
+      const len = dhypot(to[0] - from[0], to[1] - from[1]);
       const nx = -(to[1] - from[1]) / len;
       const ny = (to[0] - from[0]) / len;
       const mx = (from[0] + to[0]) / 2;
@@ -417,8 +418,8 @@ function reachPoints(e: MapEntity): [number, number][] {
         [x + s.radius, y + s.radius],
       ];
     case 'box': {
-      const cos = Math.cos(s.rotation);
-      const sin = Math.sin(s.rotation);
+      const cos = dcos(s.rotation);
+      const sin = dsin(s.rotation);
       return [
         [-1, -1],
         [1, -1],
@@ -439,17 +440,17 @@ function shapeDistance(e: MapEntity): (x: number, y: number) => number {
   const s = e.shape;
   switch (s.type) {
     case 'circle':
-      return (x, y) => Math.max(0, Math.hypot(x - ox, y - oy) - s.radius);
+      return (x, y) => Math.max(0, dhypot(x - ox, y - oy) - s.radius);
     case 'box': {
       // SetAsBox(width, height) 는 반폭/반높이
-      const cos = Math.cos(-s.rotation);
-      const sin = Math.sin(-s.rotation);
+      const cos = dcos(-s.rotation);
+      const sin = dsin(-s.rotation);
       return (x, y) => {
         const dx = x - ox;
         const dy = y - oy;
         const lx = Math.abs(dx * cos - dy * sin) - s.width;
         const ly = Math.abs(dx * sin + dy * cos) - s.height;
-        return Math.hypot(Math.max(lx, 0), Math.max(ly, 0));
+        return dhypot(Math.max(lx, 0), Math.max(ly, 0));
       };
     }
     case 'polyline': {
@@ -490,7 +491,7 @@ function segmentDistance(px: number, py: number, ax: number, ay: number, bx: num
   const vy = by - ay;
   const len = vx * vx + vy * vy;
   const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len));
-  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
+  return dhypot(px - (ax + t * vx), py - (ay + t * vy));
 }
 
 function hsl(h: number, s: number, l: number): [number, number, number] {

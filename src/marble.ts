@@ -3,6 +3,7 @@ import type { IPhysics } from './IPhysics';
 import options from './options';
 import type { ColorTheme } from './types/ColorTheme';
 import type { VectorLike } from './types/VectorLike';
+import { simRandom } from './utils/rng';
 import { transformGuard } from './utils/transformGuard';
 import { rad } from './utils/utils';
 import { Vector } from './utils/Vector';
@@ -59,7 +60,7 @@ export class Marble {
     this.physics = physics;
 
     this._maxCoolTime = 1000 + (1 - this.weight) * 4000;
-    this._coolTime = this._maxCoolTime * Math.random();
+    this._coolTime = this._maxCoolTime * simRandom();
     this._skillRate = 0.2 * this.weight;
 
     const maxLine = Math.ceil(max / 10);
@@ -111,7 +112,7 @@ export class Marble {
     }
 
     if (this._coolTime <= 0) {
-      this.skill = Math.random() < this._skillRate ? Skills.Impact : Skills.None;
+      this.skill = simRandom() < this._skillRate ? Skills.Impact : Skills.None;
       this._coolTime = this._maxCoolTime;
     }
   }

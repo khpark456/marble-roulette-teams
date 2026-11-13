@@ -3,8 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <script defer src="https://umami.lazygyu.net/script.js"
-          data-website-id="205aee0d-30b6-4c69-a053-0c72c8377be0"></script>
 
   <title>Marble Roulette 마블룰렛</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -39,15 +37,6 @@
 <body>
 <script type="module" src="./src/index.ts"></script>
 <script type="text/javascript">
-  window.dataLayer = window.dataLayer || [];
-
-  function gtag() {
-    dataLayer.push(arguments);
-  }
-
-  gtag('js', new Date());
-  gtag('config', 'G-5899C1DJM0');
-
   function getNames() {
     const value = document.querySelector('#in_names').value.trim();
     return value.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
@@ -70,9 +59,10 @@
 
   function getReady() {
     const names = getNames();
-    window.roulette.setMarbles(names);
+    // 다시보기 중에는 공유받은 시드로 배치해야 같은 추첨이 재현된다
+    window.roulette.setMarbles(names, replayData ? replayData.seed : undefined);
     ready = names.length > 0;
-    localStorage.setItem('mbr_names', names.join(','));
+    if (!replayData) localStorage.setItem('mbr_names', names.join(','));
     applyWinnerSetting();
   }
 
@@ -133,6 +123,10 @@
 
   let ready = false;
   let winnerType = 'first';
+  /** 다시보기 중이면 공유받은 추첨 정보 (src/replay.ts 의 ReplayData) */
+  let replayData = null;
+  /** 마지막 추첨 결과. 결과 공유 버튼이 쓴다 */
+  let lastResult = null;
 
   document.addEventListener('DOMContentLoaded', () => {
     initialize();
@@ -162,6 +156,8 @@
     });
 
     document.querySelector('#in_names').addEventListener('blur', () => {
+      // 다시보기 중에는 이름 목록을 정리하면(중복 합치기) 배치가 달라진다
+      if (replayData) return;
       const nameSource = getNames();
       const nameSet = new Set();
       const nameCounts = {};
@@ -198,34 +194,10 @@
 
     document.querySelector('#btnStart').addEventListener('click', () => {
       if (!ready) return;
-      gtag && gtag('event', 'start', {
-        'event_category': 'roulette',
-        'event_label': 'start',
-        'value': window.roulette.getCount(),
-      });
-      const names = getNames();
-      const marbles = names.map(n => {
-        const p = parseName(n);
-        return { name: p.name, count: p.count };
-      });
-      if (typeof umami !== 'undefined') {
-        const currentMap = window.roulette.getCurrentMap();
-        umami.track('start', {
-          count: window.roulette.getCount(),
-          // 받은 맵은 제목이 사람마다 제각각이라 id 로 모은다
-          map: currentMap ? (currentMap.id.startsWith('community:') ? currentMap.id : currentMap.title) : 'unknown',
-        });
-        marbles.forEach(m => {
-          umami.track('marble', { name: m.name, count: m.count });
-        });
-      }
       document.querySelector('#settings').classList.add('hide');
+      document.querySelector('#btnShareResult').style.display = 'none';
       window.reportMapPlay && window.reportMapPlay();
-      if (window.ads) {
-        window.ads.beginRound(() => window.roulette.start());
-      } else {
-        window.roulette.start();
-      }
+      window.roulette.start();
     });
 
     document.querySelector('#chkAutoRecording').addEventListener('change', (e) => {
@@ -250,13 +222,100 @@
     document.querySelector('#in_rangeStart').addEventListener('change', () => selectWinnerType('multi', 'start'));
     document.querySelector('#in_rangeEnd').addEventListener('change', () => selectWinnerType('multi', 'end'));
 
-    window.roulette.addEventListener('goal', () => {
+    window.roulette.addEventListener('goal', (e) => {
       ready = false;
-      if (window.ads) window.ads.showResult();
+      const map = window.roulette.getCurrentMap();
+      const range = window.roulette.getWinnerRange();
+      lastResult = {
+        data: {
+          seed: window.roulette.getSeed(),
+          names: window.roulette.getNames(),
+          map: map ? map.index : -1,
+          skills: !!window.options.useSkills,
+          range: [range.start, range.end],
+        },
+        winners: e.detail.winners,
+      };
       setTimeout(() => {
         document.querySelector('#settings').classList.remove('hide');
+        document.querySelector('#btnShareResult').style.display = '';
+        // 다시보기는 시작만 누르면 다시 재생되도록 바로 준비한다
+        if (replayData) getReady();
       }, 3000);
     });
+
+    document.querySelector('#btnShareResult').addEventListener('click', async () => {
+      if (!lastResult) return;
+      if (lastResult.data.map < 0) {
+        simpleToast('다운로드한 맵은 다시보기 공유를 지원하지 않습니다');
+        return;
+      }
+      const res = await window.shareResult(lastResult.data, lastResult.winners);
+      if (res.outcome === 'copied') {
+        simpleToast('링크를 복사했습니다. 채팅에 붙여 넣어 주세요');
+      } else if (res.outcome === 'manual') {
+        window.prompt('아래 내용을 복사해 채팅에 붙여 넣어 주세요', res.text);
+      }
+    });
+
+    // ---- 다시보기 ----
+    const replayLocked = ['#sltMap', '#chkSkill', '#in_winningRank', '#in_rangeStart', '#in_rangeEnd',
+      '.btn-first-winner', '.btn-last-winner', '.btn-multi-winner'];
+
+    function showReplayBanner(text, kind) {
+      const banner = document.querySelector('#replayBanner');
+      document.querySelector('#replayBannerText').textContent = text;
+      banner.dataset.kind = kind;
+      banner.style.display = '';
+    }
+
+    function enterReplay(d) {
+      if (d.map < 0 || d.map >= window.roulette.getMaps().length) {
+        showReplayBanner('이 버전에 없는 맵이라 다시보기를 재생할 수 없습니다.', 'error');
+        return;
+      }
+      replayData = d;
+      window.roulette.setMap(d.map);
+      document.querySelector('#sltMap').value = 'builtin:' + d.map;
+      document.querySelector('#lnkMoreMaps').style.visibility = 'hidden';
+      document.querySelector('#btnShuffle').style.display = 'none';
+      const names = document.querySelector('#in_names');
+      names.value = d.names.join(',');
+      names.readOnly = true;
+      document.querySelector('#chkSkill').checked = d.skills;
+      window.options.useSkills = d.skills;
+      const [start, end] = d.range;
+      if (start === end) {
+        document.querySelector('#in_winningRank').value = start + 1;
+        winnerType = 'custom';
+      } else {
+        document.querySelector('#in_rangeStart').value = start + 1;
+        document.querySelector('#in_rangeEnd').value = end + 1;
+        winnerType = 'multi';
+      }
+      replayLocked.forEach((sel) => (document.querySelector(sel).disabled = true));
+      getReady();
+      showReplayBanner('공유받은 추첨 다시보기입니다. 시작을 누르면 같은 추첨이 처음부터 그대로 재생됩니다.', 'info');
+    }
+
+    function exitReplay() {
+      replayData = null;
+      document.querySelector('#replayBanner').style.display = 'none';
+      document.querySelector('#lnkMoreMaps').style.visibility = '';
+      document.querySelector('#btnShuffle').style.display = '';
+      document.querySelector('#in_names').readOnly = false;
+      replayLocked.forEach((sel) => (document.querySelector(sel).disabled = false));
+      const saved = localStorage.getItem('mbr_names');
+      if (saved) document.querySelector('#in_names').value = saved;
+      const url = new URL(location.href);
+      if (url.searchParams.has('replay')) {
+        url.searchParams.delete('replay');
+        history.replaceState(null, '', url.toString());
+      }
+      getReady();
+    }
+
+    document.querySelector('#btnExitReplay').addEventListener('click', exitReplay);
 
     window.roulette.addEventListener('message', (e) => {
       simpleToast(e.detail);
@@ -276,6 +335,17 @@
     // 맵을 바꾸면 살아남은 구슬에서 이름을 뽑아 재구성하는데, 골인한 구슬이 사라지고
     // 무게(/n)도 날아가므로 원본인 이름 입력창에서 다시 채운다
     window.initMapSelector(getReady, simpleToast);
+
+    window.getReplay().then((res) => {
+      if (!res) return;
+      if (!res.ok) {
+        showReplayBanner(res.reason === 'version'
+          ? '앱이 업데이트되어 이 다시보기는 재생할 수 없습니다.'
+          : '다시보기 링크가 올바르지 않습니다.', 'error');
+        return;
+      }
+      enterReplay(res.data);
+    });
 
     // const checkDonateButtonLoaded = () => {
     //   const btn = document.querySelector('span.bmc-btn-text');
@@ -334,7 +404,7 @@
       }
     };
 
-    checkNotice();
+    // Teams 포크: 원본 사이트 공지는 자동으로 띄우지 않는다
   }
 </script>
 <h1 class="sr-only">Marble Roulette™ 마블 룰렛™ - 랜덤 추첨기</h1>
@@ -405,17 +475,15 @@
     <h3 data-trans>Enter names below</h3>
     <textarea id="in_names" placeholder="Input names separated by commas or line feed here" data-trans="placeholder">수박*2,키위*2,귤*2</textarea>
     <div class="actions">
-      <button id="btnNotice">
-        <i class="icon megaphone"></i>
-      </button>
-      <a href='https://marblerouletteshop.com' target='_blank' id="btnShop" class='btn' title='MarbleRoulette Shop'>
-        <i class="icon shop"></i>
-        <span>Shop</span>
-      </a>
+      <button id="btnNotice" style="display:none"></button>
       <div class="sep"></div>
       <button id="btnShuffle">
         <i class="icon shuffle"></i>
         <span data-trans>Shuffle</span>
+      </button>
+      <button id="btnShareResult" style="display:none" title="추첨 과정을 채팅에 공유">
+        <i class="icon megaphone"></i>
+        <span>결과 공유</span>
       </button>
       <button id="btnStart">
         <i class="icon play"></i>
@@ -440,7 +508,20 @@
     <button id="closeNotice" data-trans>Close</button>
   </div>
 </div>
-<div class="copyright">&copy; 2022-2026. 마블 룰렛™ by <a href="https://lazygyu.net" target="_blank">lazygyu</a> | <a href="https://marblerouletteshop.com/advertise" target="_blank">광고문의</a>
+<div class="copyright">Based on <a href="https://github.com/lazygyu/roulette" target="_blank" rel="noopener">마블 룰렛</a> by lazygyu (MIT License)</div>
+<div id="replayBanner" class="replay-banner" style="display:none" role="status">
+  <span id="replayBannerText"></span>
+  <button id="btnExitReplay" type="button">새 추첨하기</button>
+</div>
+<div id="teamsPanel" class="teams-panel" hidden>
+  <h2>구슬 추첨</h2>
+  <p class="teams-help">참가자 이름을 한 줄에 하나씩(또는 쉼표로) 입력한 뒤 스테이지에 공유하세요.
+    공유된 화면에서 <b>시작</b>을 누르면 모든 참가자가 같은 추첨 화면을 봅니다.</p>
+  <label for="teamsNames" class="teams-label">참가자 <span id="teamsNameCount">0명</span></label>
+  <textarea id="teamsNames" placeholder="홍길동&#10;김철수&#10;이영희*2"></textarea>
+  <p class="teams-hint"><code>이름*2</code> 구슬 2개 · <code>이름/3</code> 가중치 3</p>
+  <button id="btnShareStage" type="button">스테이지에 공유</button>
+  <p id="teamsStatus" class="teams-status" role="status"></p>
 </div>
 </body>
 </html>
